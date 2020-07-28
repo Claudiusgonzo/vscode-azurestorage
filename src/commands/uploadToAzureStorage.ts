@@ -4,14 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as fse from 'fs-extra';
-import * as path from 'path';
+import { basename } from 'path';
 import * as vscode from 'vscode';
 import { IActionContext } from 'vscode-azureextensionui';
 import { ext } from '../extensionVariables';
 import { TransferProgress } from '../TransferProgress';
 import { BlobContainerTreeItem } from '../tree/blob/BlobContainerTreeItem';
 import { FileShareTreeItem } from '../tree/fileShare/FileShareTreeItem';
-import { listFilePathsWithAzureSeparator } from '../utils/fs';
+import { getNumFilesInDirectory } from '../utils/fs';
 import { localize } from '../utils/localize';
 import { uploadFiles } from '../utils/uploadUtils';
 import { selectWorkspaceItem } from '../utils/workspaceUtils';
@@ -38,17 +38,8 @@ export async function uploadToAzureStorage(actionContext: IActionContext, target
     }
 
     let treeItem: BlobContainerTreeItem | FileShareTreeItem = await ext.tree.showTreeItemPicker([BlobContainerTreeItem.contextValue, FileShareTreeItem.contextValue], actionContext);
-    let filePathsToUpload: string[];
-    let parentDirectory: string;
     let destinationName: string;
-
-    if ((await fse.stat(resourcePath)).isDirectory()) {
-        filePathsToUpload = await listFilePathsWithAzureSeparator(resourcePath);
-        parentDirectory = resourcePath;
-    } else {
-        filePathsToUpload = [resourcePath];
-        parentDirectory = path.dirname(resourcePath);
-    }
+    const destinationPath: string = basename(resourcePath);
 
     if (treeItem instanceof BlobContainerTreeItem) {
         destinationName = treeItem.container.name;
@@ -56,8 +47,13 @@ export async function uploadToAzureStorage(actionContext: IActionContext, target
         destinationName = treeItem.shareName;
     }
 
-    await vscode.window.withProgress({ cancellable: true, location: vscode.ProgressLocation.Notification, title: `Uploading to ${destinationName} from ${parentDirectory}` }, async (notificationProgress, cancellationToken) => {
-        const transferProgress = new TransferProgress(filePathsToUpload.length);
-        await uploadFiles(treeItem, parentDirectory, '', filePathsToUpload, actionContext.telemetry.properties, transferProgress, notificationProgress, cancellationToken);
+    await vscode.window.withProgress({ cancellable: true, location: vscode.ProgressLocation.Notification, title: `Uploading to ${destinationName} from ${resourcePath}` }, async (notificationProgress, cancellationToken) => {
+        if ((await fse.stat(resourcePath)).isDirectory()) {
+            const uploadSize: number = await getNumFilesInDirectory(resourcePath);
+            const transferProgress: TransferProgress = new TransferProgress(uploadSize);
+            await uploadFiles(treeItem, resourcePath, destinationPath, actionContext.telemetry.properties, transferProgress, notificationProgress, cancellationToken);
+        } else {
+            await treeItem.uploadLocalFile(resourcePath, destinationPath, true);
+        }
     });
 }

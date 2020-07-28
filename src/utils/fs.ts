@@ -16,7 +16,11 @@ export function isSubpath(expectedParent: string, expectedChild: string): boolea
     return relativePath !== '' && !relativePath.startsWith('..') && relativePath !== expectedChild;
 }
 
-export async function listFilePathsWithAzureSeparator(directoryPath: string, ignoreGlobPattern?: string): Promise<string[]> {
+export async function getNumFilesInDirectory(directoryPath: string): Promise<number> {
+    return (await listFilePathsWithAzureSeparator(directoryPath)).length;
+}
+
+async function listFilePathsWithAzureSeparator(directoryPath: string, ignoreGlobPattern?: string): Promise<string[]> {
     // Note: glob always returns paths with '/' separator, even on Windows, which also is the main separator used by Azure.
     return new Promise<string[]>(
         (resolve, reject) => {

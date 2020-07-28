@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ContainerClient } from '@azure/storage-blob';
+import { sep } from "path";
 import { AzCopyClient, AzCopyLocation, IAzCopyClient, ICopyOptions, ILocalLocation, IRemoteSasLocation, TransferStatus } from 'se-az-copy';
 import { setAzCopyExes } from 'se-az-copy/dist/src/AzCopyExe';
-import { MessageItem } from 'vscode';
+import { MessageItem, Progress } from 'vscode';
 import { callWithTelemetryAndErrorHandling, IActionContext } from 'vscode-azureextensionui';
 import { ext } from '../extensionVariables';
 import { TransferProgress } from '../TransferProgress';
@@ -21,6 +22,13 @@ export function createAzCopyLocalSource(sourcePath: string): ILocalLocation {
     return { type: "Local", path: sourcePath, useWildCard: false };
 }
 
+export function createAzCopyLocalDirectorySource(sourceDirectoryPath: string): ILocalLocation {
+    // TODO: this doesn't support uploading '.' files/directories (.git & .vscode will need to be excluded)
+    // Append an '*' to the path and use wildcard so that all children are uploaded (not including the given folder)
+    const path: string = sourceDirectoryPath.endsWith(sep) ? `${sourceDirectoryPath}*` : `${sourceDirectoryPath}${sep}*`;
+    return { type: "Local", path, useWildCard: true };
+}
+
 export function createAzCopyDestination(root: IStorageRoot, containerName: string, destinationPath: string): IRemoteSasLocation {
     const sasToken: string = root.generateSasToken();
     const containerClient: ContainerClient = createBlobContainerClient(root, containerName);
@@ -28,7 +36,16 @@ export function createAzCopyDestination(root: IStorageRoot, containerName: strin
     return { type: "RemoteSas", sasToken, resourceUri: containerClient.url, path, useWildCard: false };
 }
 
-export async function azCopyTransfer(src: ILocalLocation, dst: IRemoteSasLocation, transferProgress: TransferProgress): Promise<void> {
+export async function azCopyTransfer(
+    src: ILocalLocation,
+    dst: IRemoteSasLocation,
+    transferProgress: TransferProgress,
+    notificationProgress?: Progress<{
+        message?: string | undefined;
+        increment?: number | undefined;
+    }>,
+    throwIfCanceled?: () => void
+): Promise<void> {
     if (await validateAzCopyInstalled()) {
         // Call this at least once before creating an AzCopy client.
         // Once you call it you don't have to call it again
@@ -39,20 +56,43 @@ export async function azCopyTransfer(src: ILocalLocation, dst: IRemoteSasLocatio
         });
 
         const copyClient: AzCopyClient = new AzCopyClient({});
-        let jobId = await startAndWaitForCopy(copyClient, src, dst, { fromTo: 'LocalBlob', overwriteExisting: "true" }, transferProgress);
+        const copyOptions: ICopyOptions = { fromTo: 'LocalBlob', overwriteExisting: "true", recursive: true, followSymLinks: true };
+        let jobId = await startAndWaitForCopy(copyClient, src, dst, copyOptions, transferProgress, notificationProgress, throwIfCanceled);
         let finalTransferStatus = (await copyClient.getJobInfo(jobId)).latestStatus;
-        if (finalTransferStatus?.JobStatus === 'Failed') {
-            throw new Error(localize('azCopyTransferFailed', `AzCopy Transfer Failed: ${finalTransferStatus.ErrorMsg}`));
+        if (!finalTransferStatus || finalTransferStatus.JobStatus === 'Failed') {
+            throw new Error(localize('azCopyTransferFailed', `AzCopy Transfer Failed${finalTransferStatus?.ErrorMsg ? `: ${finalTransferStatus.ErrorMsg}` : ''}`));
         }
     }
 }
 
-async function startAndWaitForCopy(copyClient: IAzCopyClient, src: AzCopyLocation, dst: AzCopyLocation, options: ICopyOptions, transferProgress: TransferProgress): Promise<string> {
+async function startAndWaitForCopy(
+    copyClient: IAzCopyClient,
+    src: AzCopyLocation,
+    dst: AzCopyLocation,
+    options: ICopyOptions,
+    transferProgress: TransferProgress,
+    notificationProgress?: Progress<{
+        message?: string | undefined;
+        increment?: number | undefined;
+    }>,
+    throwIfCanceled?: () => void
+): Promise<string> {
     let jobId: string = await copyClient.copy(src, dst, options);
     let status: TransferStatus | undefined;
+    let finishedWork: number;
     while (!status || status.StatusType !== 'EndOfJob') {
+        if (!!throwIfCanceled) {
+            throwIfCanceled();
+        }
+
         status = (await copyClient.getJobInfo(jobId)).latestStatus;
-        transferProgress.reportToOutputWindow(status ? status.BytesOverWire : 0);
+        // tslint:disable-next-line: strict-boolean-expressions
+        finishedWork = status && (src.useWildCard ? status.TransfersCompleted : status.BytesOverWire) || 0;
+        transferProgress.reportToOutputWindow(finishedWork);
+        if (!!notificationProgress) {
+            transferProgress.reportToNotification(finishedWork, notificationProgress);
+        }
+
         // tslint:disable-next-line: no-string-based-set-timeout
         await new Promise((resolve, _reject) => setTimeout(resolve, 1000));
     }

@@ -19,7 +19,7 @@ import { TransferProgress } from '../../TransferProgress';
 import { azCopyTransfer, createAzCopyDestination, createAzCopyLocalSource } from '../../utils/azCopyUtils';
 import { createBlobContainerClient, createBlockBlobClient, createChildAsNewBlockBlob, doesBlobExist, IBlobContainerCreateChildContext, loadMoreBlobChildren } from '../../utils/blobUtils';
 import { throwIfCanceled } from '../../utils/errorUtils';
-import { listFilePathsWithAzureSeparator } from '../../utils/fs';
+import { getNumFilesInDirectory } from '../../utils/fs';
 import { Limits } from '../../utils/limits';
 import { uploadFiles } from '../../utils/uploadUtils';
 import { ICopyUrl } from '../ICopyUrl';
@@ -285,9 +285,6 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
 
             ext.outputChannel.appendLog(`Deploying to static website ${this.root.storageAccountName}/${this.container.name}`);
 
-            // Find source files
-            let filePathsWithAzureSeparator: string[] = await listFilePathsWithAzureSeparator(sourceFolderPath, '.{git,vscode}/**');
-
             // Delete existing blobs (if requested)
             let transferProgress = new TransferProgress(blobsToDelete.length, 'Deleting');
             await this.deleteBlobs(blobsToDelete, transferProgress, notificationProgress, cancellationToken, properties);
@@ -296,8 +293,9 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
             notificationProgress.report({ increment: -1 });
 
             // Upload files as blobs
-            transferProgress = new TransferProgress(filePathsWithAzureSeparator.length, 'Uploading');
-            await uploadFiles(this, sourceFolderPath, destBlobFolder, filePathsWithAzureSeparator, properties, transferProgress, notificationProgress, cancellationToken);
+            const uploadSize: number = await getNumFilesInDirectory(sourceFolderPath);
+            transferProgress = new TransferProgress(uploadSize, 'Uploading');
+            await uploadFiles(this, sourceFolderPath, destBlobFolder, properties, transferProgress, notificationProgress, cancellationToken);
 
             let webEndpoint = this.getPrimaryWebEndpoint();
             if (!webEndpoint) {

@@ -3,13 +3,14 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as path from 'path';
+import { ILocalLocation, IRemoteSasLocation } from 'se-az-copy';
 import * as vscode from 'vscode';
-import { parseError, TelemetryProperties } from "vscode-azureextensionui";
+import { TelemetryProperties } from "vscode-azureextensionui";
 import { ext } from '../extensionVariables';
 import { TransferProgress } from '../TransferProgress';
 import { BlobContainerTreeItem } from '../tree/blob/BlobContainerTreeItem';
 import { FileShareTreeItem } from '../tree/fileShare/FileShareTreeItem';
+import { azCopyTransfer, createAzCopyDestination, createAzCopyLocalDirectorySource } from './azCopyUtils';
 import { throwIfCanceled } from './errorUtils';
 import { localize } from './localize';
 
@@ -17,7 +18,6 @@ export async function uploadFiles(
     destTreeItem: BlobContainerTreeItem | FileShareTreeItem,
     sourceFolder: string,
     destFolder: string,
-    filePathsToUpload: string[],
     properties: TelemetryProperties,
     transferProgress: TransferProgress,
     notificationProgress: vscode.Progress<{
@@ -26,21 +26,15 @@ export async function uploadFiles(
     }>,
     cancellationToken: vscode.CancellationToken
 ): Promise<void> {
-    for (const sourceFileIndex of filePathsToUpload.keys()) {
-        throwIfCanceled(cancellationToken, properties, "uploadFiles");
-        let sourceFilePath: string = filePathsToUpload[sourceFileIndex];
-        let relativeFile: string = path.relative(sourceFolder, sourceFilePath);
-        let destFilePath: string = path.join(destFolder, relativeFile);
-        ext.outputChannel.appendLog(localize('uploadingFile', 'Uploading "{0}" to "{1}"...', sourceFilePath, destTreeItem.label));
-
-        try {
-            await destTreeItem.uploadLocalFile(sourceFilePath, destFilePath, false, true /* suppressLogs */);
-        } catch (error) {
-            throw new Error(`Error uploading "${sourceFilePath}": ${parseError(error).message} `);
-        }
-
-        transferProgress.reportToNotification(sourceFileIndex, notificationProgress);
+    const throwIfCanceledFunction: () => void = () => { throwIfCanceled(cancellationToken, properties, "uploadFiles"); };
+    const src: ILocalLocation = createAzCopyLocalDirectorySource(sourceFolder);
+    // TODO: support file shares
+    let containerName: string = '';
+    if (destTreeItem instanceof BlobContainerTreeItem) {
+        containerName = destTreeItem.container.name;
     }
+    const dst: IRemoteSasLocation = createAzCopyDestination(destTreeItem.root, containerName, destFolder);
+    await azCopyTransfer(src, dst, transferProgress, notificationProgress, throwIfCanceledFunction);
 
     ext.outputChannel.appendLog(localize('finishedUpload', 'Uploaded to "{0}".', destTreeItem.label));
 }
