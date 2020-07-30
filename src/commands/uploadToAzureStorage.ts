@@ -12,11 +12,12 @@ import { TransferProgress } from '../TransferProgress';
 import { BlobContainerTreeItem } from '../tree/blob/BlobContainerTreeItem';
 import { FileShareTreeItem } from '../tree/fileShare/FileShareTreeItem';
 import { shouldUseAzCopy } from '../utils/azCopyUtils';
-import { getBlobPath } from '../utils/blobUtils';
-import { getFileName } from '../utils/fileUtils';
+import { doesBlobExist, getBlobPath } from '../utils/blobUtils';
+import { doesFileExist, getFileName } from '../utils/fileUtils';
 import { getNumFilesInDirectory } from '../utils/fs';
 import { localize } from '../utils/localize';
 import { uploadFiles } from '../utils/uploadUtils';
+import { warnFileAlreadyExists } from '../utils/validateNames';
 import { selectWorkspaceItem } from '../utils/workspaceUtils';
 
 export async function uploadToAzureStorage(actionContext: IActionContext, target?: vscode.Uri): Promise<void> {
@@ -57,6 +58,10 @@ export async function uploadToAzureStorage(actionContext: IActionContext, target
             const transferProgress: TransferProgress = new TransferProgress(uploadSize);
             await uploadFiles(treeItem, resourcePath, destinationPath, actionContext.telemetry.properties, transferProgress, notificationProgress, cancellationToken);
         } else {
+            if (treeItem instanceof BlobContainerTreeItem ? await doesBlobExist(treeItem, destinationPath) : await doesFileExist(basename(destinationPath), treeItem, dirname(destinationPath), treeItem.shareName)) {
+                await warnFileAlreadyExists(destinationPath);
+            }
+
             await treeItem.uploadLocalFile(resourcePath, destinationPath, await shouldUseAzCopy(actionContext, resourcePath));
         }
     });

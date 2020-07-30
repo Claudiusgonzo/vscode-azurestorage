@@ -5,15 +5,14 @@
 
 import { basename, dirname } from "path";
 import { OpenDialogOptions, Uri, window } from "vscode";
-import { DialogResponses, IActionContext } from "vscode-azureextensionui";
-import { ext } from "../extensionVariables";
+import { IActionContext } from "vscode-azureextensionui";
 import { BlobContainerTreeItem } from "../tree/blob/BlobContainerTreeItem";
 import { FileShareTreeItem } from "../tree/fileShare/FileShareTreeItem";
 import { shouldUseAzCopy } from "../utils/azCopyUtils";
 import { doesBlobExist } from "../utils/blobUtils";
 import { doesFileExist } from "../utils/fileUtils";
 import { localize } from "../utils/localize";
-import { validateFileName } from "../utils/validateNames";
+import { validateFileName, warnFileAlreadyExists } from "../utils/validateNames";
 
 let lastUploadFolder: Uri;
 
@@ -47,13 +46,7 @@ export async function uploadFile(context: IActionContext, treeItem: BlobContaine
         });
         if (remoteFilePath) {
             if (treeItem instanceof BlobContainerTreeItem ? await doesBlobExist(treeItem, remoteFilePath) : await doesFileExist(basename(remoteFilePath), treeItem, dirname(remoteFilePath), treeItem.shareName)) {
-                await ext.ui.showWarningMessage(
-                    localize('fileAlreadyExists', `A file with the name "${remoteFilePath}" already exists. Do you want to overwrite it?`),
-                    { modal: true },
-                    DialogResponses.yes,
-                    DialogResponses.cancel
-                );
-
+                await warnFileAlreadyExists(remoteFilePath);
                 const id: string = `${treeItem.fullId}/${remoteFilePath}`;
                 try {
                     const result = await treeItem.treeDataProvider.findTreeItem(id, context);
