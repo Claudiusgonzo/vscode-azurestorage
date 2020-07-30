@@ -3,14 +3,14 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ILocalLocation, IRemoteSasLocation } from 'se-az-copy';
+import { ILocalLocation, IRemoteSasLocation } from '@azure-tools/azcopy-node';
 import * as vscode from 'vscode';
 import { TelemetryProperties } from "vscode-azureextensionui";
 import { ext } from '../extensionVariables';
 import { TransferProgress } from '../TransferProgress';
 import { BlobContainerTreeItem } from '../tree/blob/BlobContainerTreeItem';
 import { FileShareTreeItem } from '../tree/fileShare/FileShareTreeItem';
-import { azCopyTransfer, createAzCopyDestination, createAzCopyLocalDirectorySource } from './azCopyUtils';
+import { azCopyBlobTransfer, azCopyFileTransfer, createAzCopyDestination, createAzCopyLocalDirectorySource } from './azCopyUtils';
 import { throwIfCanceled } from './errorUtils';
 import { localize } from './localize';
 
@@ -28,13 +28,12 @@ export async function uploadFiles(
 ): Promise<void> {
     const throwIfCanceledFunction: () => void = () => { throwIfCanceled(cancellationToken, properties, "uploadFiles"); };
     const src: ILocalLocation = createAzCopyLocalDirectorySource(sourceFolder);
-    // TODO: support file shares
-    let containerName: string = '';
+    const dst: IRemoteSasLocation = createAzCopyDestination(destTreeItem, destFolder);
     if (destTreeItem instanceof BlobContainerTreeItem) {
-        containerName = destTreeItem.container.name;
+        await azCopyBlobTransfer(src, dst, transferProgress, notificationProgress, throwIfCanceledFunction);
+    } else {
+        await azCopyFileTransfer(src, dst, transferProgress, notificationProgress, throwIfCanceledFunction);
     }
-    const dst: IRemoteSasLocation = createAzCopyDestination(destTreeItem.root, containerName, destFolder);
-    await azCopyTransfer(src, dst, transferProgress, notificationProgress, throwIfCanceledFunction);
 
     ext.outputChannel.appendLog(localize('finishedUpload', 'Uploaded to "{0}".', destTreeItem.label));
 }

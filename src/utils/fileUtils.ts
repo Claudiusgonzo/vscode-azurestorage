@@ -29,9 +29,9 @@ export function createFileClient(root: IStorageRoot, shareName: string, director
     return directoryClient.getFileClient(fileName);
 }
 
-// Currently only supports creating block blobs
-export async function askAndCreateEmptyTextFile(parent: AzureParentTreeItem<IStorageRoot>, directoryPath: string, shareName: string, context: ICreateChildImplContext & IFileShareCreateChildContext): Promise<FileTreeItem> {
-    let fileName = context.childName || await ext.ui.showInputBox({
+export async function getFileName(parent: AzureParentTreeItem<IStorageRoot>, directoryPath: string, shareName: string, value?: string): Promise<string> {
+    return await ext.ui.showInputBox({
+        value,
         placeHolder: 'Enter a name for the new file',
         validateInput: async (name: string) => {
             let nameError = validateFileName(name);
@@ -43,7 +43,11 @@ export async function askAndCreateEmptyTextFile(parent: AzureParentTreeItem<ISto
             return undefined;
         }
     });
+}
 
+// Currently only supports creating block blobs
+export async function askAndCreateEmptyTextFile(parent: AzureParentTreeItem<IStorageRoot>, directoryPath: string, shareName: string, context: ICreateChildImplContext & IFileShareCreateChildContext): Promise<FileTreeItem> {
+    let fileName = context.childName || await getFileName(parent, directoryPath, shareName);
     if (fileName) {
         return await window.withProgress({ location: ProgressLocation.Window }, async (progress) => {
             context.showCreatingTreeItem(fileName);

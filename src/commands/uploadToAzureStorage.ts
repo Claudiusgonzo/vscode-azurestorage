@@ -4,13 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as fse from 'fs-extra';
-import { basename } from 'path';
+import { basename, dirname } from 'path';
 import * as vscode from 'vscode';
 import { IActionContext } from 'vscode-azureextensionui';
 import { ext } from '../extensionVariables';
 import { TransferProgress } from '../TransferProgress';
 import { BlobContainerTreeItem } from '../tree/blob/BlobContainerTreeItem';
 import { FileShareTreeItem } from '../tree/fileShare/FileShareTreeItem';
+import { shouldUseAzCopy } from '../utils/azCopyUtils';
+import { getBlobPath } from '../utils/blobUtils';
+import { getFileName } from '../utils/fileUtils';
 import { getNumFilesInDirectory } from '../utils/fs';
 import { localize } from '../utils/localize';
 import { uploadFiles } from '../utils/uploadUtils';
@@ -39,12 +42,13 @@ export async function uploadToAzureStorage(actionContext: IActionContext, target
 
     let treeItem: BlobContainerTreeItem | FileShareTreeItem = await ext.tree.showTreeItemPicker([BlobContainerTreeItem.contextValue, FileShareTreeItem.contextValue], actionContext);
     let destinationName: string;
-    const destinationPath: string = basename(resourcePath);
-
+    let destinationPath: string = basename(resourcePath);
     if (treeItem instanceof BlobContainerTreeItem) {
         destinationName = treeItem.container.name;
+        destinationPath = await getBlobPath(treeItem, destinationPath);
     } else {
         destinationName = treeItem.shareName;
+        destinationPath = await getFileName(treeItem, dirname(resourcePath), treeItem.shareName, destinationPath);
     }
 
     await vscode.window.withProgress({ cancellable: true, location: vscode.ProgressLocation.Notification, title: `Uploading to ${destinationName} from ${resourcePath}` }, async (notificationProgress, cancellationToken) => {
@@ -53,7 +57,7 @@ export async function uploadToAzureStorage(actionContext: IActionContext, target
             const transferProgress: TransferProgress = new TransferProgress(uploadSize);
             await uploadFiles(treeItem, resourcePath, destinationPath, actionContext.telemetry.properties, transferProgress, notificationProgress, cancellationToken);
         } else {
-            await treeItem.uploadLocalFile(resourcePath, destinationPath, true);
+            await treeItem.uploadLocalFile(resourcePath, destinationPath, await shouldUseAzCopy(actionContext, resourcePath));
         }
     });
 }

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { ILocalLocation, IRemoteSasLocation } from '@azure-tools/azcopy-node';
 import { TransferProgressEvent } from '@azure/core-http';
 import * as azureStorageShare from '@azure/storage-file-share';
 import * as fse from 'fs-extra';
@@ -12,9 +13,11 @@ import * as vscode from 'vscode';
 import { Uri } from 'vscode';
 import { AzExtTreeItem, AzureParentTreeItem, DialogResponses, GenericTreeItem, IActionContext, ICreateChildImplContext, UserCancelledError } from 'vscode-azureextensionui';
 import { AzureStorageFS } from "../../AzureStorageFS";
+import { IExistingFileContext } from '../../commands/uploadFile';
 import { getResourcesPath } from "../../constants";
 import { ext } from "../../extensionVariables";
 import { TransferProgress } from '../../TransferProgress';
+import { azCopyFileTransfer, createAzCopyDestination, createAzCopyLocalSource, shouldUseAzCopy } from '../../utils/azCopyUtils';
 import { askAndCreateChildDirectory, doesDirectoryExist, listFilesInDirectory } from '../../utils/directoryUtils';
 import { askAndCreateEmptyTextFile, createDirectoryClient, createFileClient, createShareClient } from '../../utils/fileUtils';
 import { ICopyUrl } from '../ICopyUrl';
@@ -99,9 +102,13 @@ export class FileShareTreeItem extends AzureParentTreeItem<IStorageRoot> impleme
         AzureStorageFS.fireDeleteEvent(this);
     }
 
-    public async createChildImpl(context: ICreateChildImplContext & IFileShareCreateChildContext): Promise<AzExtTreeItem> {
+    public async createChildImpl(context: ICreateChildImplContext & Partial<IExistingFileContext> & IFileShareCreateChildContext): Promise<AzExtTreeItem> {
         let child: AzExtTreeItem;
-        if (context.childType === FileTreeItem.contextValue) {
+        if (context.remoteFilePath && context.localFilePath) {
+            context.showCreatingTreeItem(context.remoteFilePath);
+            await this.uploadLocalFile(context.localFilePath, context.remoteFilePath, await shouldUseAzCopy(context, context.localFilePath));
+            child = new FileTreeItem(this, context.remoteFilePath, '', this.shareName);
+        } else if (context.childType === FileTreeItem.contextValue) {
             child = await askAndCreateEmptyTextFile(this, '', this.shareName, context);
         } else {
             child = await askAndCreateChildDirectory(this, '', this.shareName, context);
@@ -110,7 +117,7 @@ export class FileShareTreeItem extends AzureParentTreeItem<IStorageRoot> impleme
         return child;
     }
 
-    public async uploadLocalFile(sourceFilePath: string, destFilePath: string, suppressLogs: boolean = false): Promise<void> {
+    public async uploadLocalFile(sourceFilePath: string, destFilePath: string, useAzCopy: boolean = false, suppressLogs: boolean = false): Promise<void> {
         const destDisplayPath: string = `${this.shareName}/${destFilePath}`;
         const parentDirectoryPath: string = path.dirname(destFilePath);
         const parentDirectories: string[] = parentDirectoryPath.split('/');
@@ -131,23 +138,30 @@ export class FileShareTreeItem extends AzureParentTreeItem<IStorageRoot> impleme
         }
 
         const fileSize: number = (await fse.stat(sourceFilePath)).size;
-        const fileClient: azureStorageShare.ShareFileClient = createFileClient(this.root, this.shareName, parentDirectoryPath, path.basename(destFilePath));
         // tslint:disable-next-line: strict-boolean-expressions
         const transferProgress: TransferProgress = new TransferProgress(fileSize || 1, destFilePath);
-        const options: azureStorageShare.FileParallelUploadOptions = {
-            fileHttpHeaders: {
-                // tslint:disable-next-line: strict-boolean-expressions
-                fileContentType: mime.getType(destFilePath) || undefined
-            },
-            onProgress: suppressLogs ? undefined : (transferProgressEvent: TransferProgressEvent) => transferProgress.reportToOutputWindow(transferProgressEvent.loadedBytes)
-        };
 
-        if (fileSize) {
-            await fileClient.uploadFile(sourceFilePath, options);
+        if (useAzCopy) {
+            const src: ILocalLocation = createAzCopyLocalSource(sourceFilePath);
+            const dst: IRemoteSasLocation = createAzCopyDestination(this, destFilePath);
+            await azCopyFileTransfer(src, dst, transferProgress);
         } else {
-            // uploadFile hangs indefinately if the source file size is zero, so create an empty file
-            // Related: https://github.com/Azure/azure-sdk-for-js/issues/6904
-            await fileClient.create(0, options);
+            const fileClient: azureStorageShare.ShareFileClient = createFileClient(this.root, this.shareName, parentDirectoryPath, path.basename(destFilePath));
+            const options: azureStorageShare.FileParallelUploadOptions = {
+                fileHttpHeaders: {
+                    // tslint:disable-next-line: strict-boolean-expressions
+                    fileContentType: mime.getType(destFilePath) || undefined
+                },
+                onProgress: suppressLogs ? undefined : (transferProgressEvent: TransferProgressEvent) => transferProgress.reportToOutputWindow(transferProgressEvent.loadedBytes)
+            };
+
+            if (fileSize) {
+                await fileClient.uploadFile(sourceFilePath, options);
+            } else {
+                // uploadFile hangs indefinitely if the source file size is zero, so create an empty file
+                // Related: https://github.com/Azure/azure-sdk-for-js/issues/6904
+                await fileClient.create(0, options);
+            }
         }
 
         if (!suppressLogs) {

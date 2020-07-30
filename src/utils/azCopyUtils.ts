@@ -3,20 +3,32 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { AzCopyClient, AzCopyExes, AzCopyLocation, FromToOption, IAzCopyClient, ICopyOptions, ILocalLocation, IRemoteSasLocation, TransferStatus } from '@azure-tools/azcopy-node';
 import { ContainerClient } from '@azure/storage-blob';
+import { ShareClient } from '@azure/storage-file-share';
+import { stat } from 'fs-extra';
 import { sep } from "path";
-import { AzCopyClient, AzCopyLocation, IAzCopyClient, ICopyOptions, ILocalLocation, IRemoteSasLocation, TransferStatus } from 'se-az-copy';
-import { setAzCopyExes } from 'se-az-copy/dist/src/AzCopyExe';
 import { MessageItem, Progress } from 'vscode';
 import { callWithTelemetryAndErrorHandling, IActionContext } from 'vscode-azureextensionui';
 import { ext } from '../extensionVariables';
 import { TransferProgress } from '../TransferProgress';
-import { IStorageRoot } from '../tree/IStorageRoot';
+import { BlobContainerTreeItem } from '../tree/blob/BlobContainerTreeItem';
+import { FileShareTreeItem } from '../tree/fileShare/FileShareTreeItem';
 import { createBlobContainerClient } from './blobUtils';
 import { cpUtils } from './cpUtils';
+import { createShareClient } from './fileUtils';
 import { Limits } from './limits';
 import { localize } from './localize';
 import { openUrl } from './openUrl';
+
+export async function shouldUseAzCopy(context: IActionContext, localPath: string): Promise<boolean> {
+    let size = (await stat(localPath)).size;
+    context.telemetry.measurements.blockBlobUploadSize = size;
+
+    const useAzCopy: boolean = size > Limits.maxUploadDownloadSizeBytes;
+    context.telemetry.properties.azCopyBlockBlobUpload = useAzCopy ? 'true' : 'false';
+    return useAzCopy;
+}
 
 export function createAzCopyLocalSource(sourcePath: string): ILocalLocation {
     return { type: "Local", path: sourcePath, useWildCard: false };
@@ -29,14 +41,22 @@ export function createAzCopyLocalDirectorySource(sourceDirectoryPath: string): I
     return { type: "Local", path, useWildCard: true };
 }
 
-export function createAzCopyDestination(root: IStorageRoot, containerName: string, destinationPath: string): IRemoteSasLocation {
-    const sasToken: string = root.generateSasToken();
-    const containerClient: ContainerClient = createBlobContainerClient(root, containerName);
+export function createAzCopyDestination(treeItem: BlobContainerTreeItem | FileShareTreeItem, destinationPath: string): IRemoteSasLocation {
+    let resourceUri: string;
+    if (treeItem instanceof BlobContainerTreeItem) {
+        const containerClient: ContainerClient = createBlobContainerClient(treeItem.root, treeItem.container.name);
+        resourceUri = containerClient.url;
+    } else {
+        const shareClient: ShareClient = createShareClient(treeItem.root, treeItem.shareName);
+        resourceUri = shareClient.url;
+    }
+
+    const sasToken: string = treeItem.root.generateSasToken();
     const path: string = destinationPath[0] === '/' ? destinationPath : `/${destinationPath}`;
-    return { type: "RemoteSas", sasToken, resourceUri: containerClient.url, path, useWildCard: false };
+    return { type: "RemoteSas", sasToken, resourceUri, path, useWildCard: false };
 }
 
-export async function azCopyTransfer(
+export async function azCopyBlobTransfer(
     src: ILocalLocation,
     dst: IRemoteSasLocation,
     transferProgress: TransferProgress,
@@ -46,17 +66,41 @@ export async function azCopyTransfer(
     }>,
     throwIfCanceled?: () => void
 ): Promise<void> {
+    await azCopyTransfer(src, dst, transferProgress, 'LocalBlob', notificationProgress, throwIfCanceled);
+}
+
+export async function azCopyFileTransfer(
+    src: ILocalLocation,
+    dst: IRemoteSasLocation,
+    transferProgress: TransferProgress,
+    notificationProgress?: Progress<{
+        message?: string | undefined;
+        increment?: number | undefined;
+    }>,
+    throwIfCanceled?: () => void
+): Promise<void> {
+    await azCopyTransfer(src, dst, transferProgress, 'LocalFile', notificationProgress, throwIfCanceled);
+}
+
+async function azCopyTransfer(
+    src: ILocalLocation,
+    dst: IRemoteSasLocation,
+    transferProgress: TransferProgress,
+    fromTo: FromToOption,
+    notificationProgress?: Progress<{
+        message?: string | undefined;
+        increment?: number | undefined;
+    }>,
+    throwIfCanceled?: () => void,
+): Promise<void> {
     if (await validateAzCopyInstalled()) {
-        // Call this at least once before creating an AzCopy client.
-        // Once you call it you don't have to call it again
-        setAzCopyExes({
+        const exes: AzCopyExes = {
             AzCopyExe: ext.azCopyExePath,
             AzCopyExe64: ext.azCopyExePath,
             AzCopyExe32: ext.azCopyExePath
-        });
-
-        const copyClient: AzCopyClient = new AzCopyClient({});
-        const copyOptions: ICopyOptions = { fromTo: 'LocalBlob', overwriteExisting: "true", recursive: true, followSymLinks: true };
+        };
+        const copyClient: AzCopyClient = new AzCopyClient({ exes });
+        const copyOptions: ICopyOptions = { fromTo, overwriteExisting: "true", recursive: true, followSymLinks: true };
         let jobId = await startAndWaitForCopy(copyClient, src, dst, copyOptions, transferProgress, notificationProgress, throwIfCanceled);
         let finalTransferStatus = (await copyClient.getJobInfo(jobId)).latestStatus;
         if (!finalTransferStatus || finalTransferStatus.JobStatus === 'Failed') {

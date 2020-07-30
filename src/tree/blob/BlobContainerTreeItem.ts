@@ -3,24 +3,24 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { ILocalLocation, IRemoteSasLocation } from '@azure-tools/azcopy-node';
 import { TransferProgressEvent } from '@azure/core-http';
 import * as azureStorageBlob from '@azure/storage-blob';
 import * as fse from 'fs-extra';
 import * as mime from 'mime';
 import * as path from 'path';
-import { ILocalLocation, IRemoteSasLocation } from 'se-az-copy';
 import * as vscode from 'vscode';
 import { ProgressLocation, Uri } from 'vscode';
 import { AzExtTreeItem, AzureParentTreeItem, AzureTreeItem, DialogResponses, GenericTreeItem, IActionContext, ICreateChildImplContext, parseError, TelemetryProperties, UserCancelledError } from 'vscode-azureextensionui';
 import { AzureStorageFS } from '../../AzureStorageFS';
+import { IExistingFileContext } from '../../commands/uploadFile';
 import { getResourcesPath, staticWebsiteContainerName } from "../../constants";
 import { ext } from "../../extensionVariables";
 import { TransferProgress } from '../../TransferProgress';
-import { azCopyTransfer, createAzCopyDestination, createAzCopyLocalSource } from '../../utils/azCopyUtils';
-import { createBlobContainerClient, createBlockBlobClient, createChildAsNewBlockBlob, doesBlobExist, IBlobContainerCreateChildContext, loadMoreBlobChildren } from '../../utils/blobUtils';
+import { azCopyBlobTransfer, createAzCopyDestination, createAzCopyLocalSource, shouldUseAzCopy } from '../../utils/azCopyUtils';
+import { createBlobContainerClient, createBlockBlobClient, createChildAsNewBlockBlob, IBlobContainerCreateChildContext, loadMoreBlobChildren } from '../../utils/blobUtils';
 import { throwIfCanceled } from '../../utils/errorUtils';
 import { getNumFilesInDirectory } from '../../utils/fs';
-import { Limits } from '../../utils/limits';
 import { uploadFiles } from '../../utils/uploadUtils';
 import { ICopyUrl } from '../ICopyUrl';
 import { IStorageRoot } from "../IStorageRoot";
@@ -29,16 +29,9 @@ import { BlobContainerGroupTreeItem } from "./BlobContainerGroupTreeItem";
 import { BlobDirectoryTreeItem } from "./BlobDirectoryTreeItem";
 import { BlobTreeItem } from './BlobTreeItem';
 
-let lastUploadFolder: Uri;
-
 export enum ChildType {
     newBlockBlob,
     uploadedBlob
-}
-
-export interface IExistingBlobContext extends IActionContext {
-    filePath: string;
-    blobPath: string;
 }
 
 export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> implements ICopyUrl {
@@ -150,12 +143,12 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
         AzureStorageFS.fireDeleteEvent(this);
     }
 
-    public async createChildImpl(context: ICreateChildImplContext & Partial<IExistingBlobContext> & IBlobContainerCreateChildContext): Promise<AzExtTreeItem> {
+    public async createChildImpl(context: ICreateChildImplContext & Partial<IExistingFileContext> & IBlobContainerCreateChildContext): Promise<AzExtTreeItem> {
         let child: AzExtTreeItem;
-        if (context.blobPath && context.filePath) {
-            context.showCreatingTreeItem(context.blobPath);
-            await this.uploadLocalFile(context.filePath, context.blobPath, await this.shouldUseAzCopy(context, context.filePath));
-            child = new BlobTreeItem(this, context.blobPath, this.container);
+        if (context.remoteFilePath && context.localFilePath) {
+            context.showCreatingTreeItem(context.remoteFilePath);
+            await this.uploadLocalFile(context.localFilePath, context.remoteFilePath, await shouldUseAzCopy(context, context.localFilePath));
+            child = new BlobTreeItem(this, context.remoteFilePath, this.container);
         } else if (context.childName && context.childType === BlobDirectoryTreeItem.contextValue) {
             child = new BlobDirectoryTreeItem(this, context.childName, this.container);
         } else {
@@ -172,60 +165,6 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
         await vscode.env.clipboard.writeText(url);
         ext.outputChannel.show();
         ext.outputChannel.appendLog(`Container URL copied to clipboard: ${url}`);
-    }
-
-    // This is the public entrypoint for azureStorage.uploadBlockBlob
-    public async uploadBlockBlob(context: IActionContext): Promise<void> {
-        let uris = await vscode.window.showOpenDialog(
-            <vscode.OpenDialogOptions>{
-                canSelectFiles: true,
-                canSelectFolders: false,
-                canSelectMany: false,
-                defaultUri: lastUploadFolder,
-                filters: {
-                    "All files": ['*']
-                },
-                openLabel: "Upload"
-            }
-        );
-        if (uris && uris.length) {
-            let uri = uris[0];
-            lastUploadFolder = uri;
-            let filePath = uri.fsPath;
-
-            let blobPath = await vscode.window.showInputBox({
-                prompt: 'Enter a name for the uploaded file (may include a path)',
-                value: path.basename(filePath),
-                validateInput: BlobContainerTreeItem.validateBlobName
-            });
-            if (blobPath) {
-                if (await doesBlobExist(this, blobPath)) {
-                    const result = await vscode.window.showWarningMessage(
-                        `A blob with the name "${blobPath}" already exists. Do you want to overwrite it?`,
-                        { modal: true },
-                        DialogResponses.yes, DialogResponses.cancel);
-                    if (result !== DialogResponses.yes) {
-                        throw new UserCancelledError();
-                    }
-
-                    let blobId = `${this.fullId}/${blobPath}`;
-                    try {
-                        let blobTreeItem = await this.treeDataProvider.findTreeItem(blobId, context);
-                        if (blobTreeItem) {
-                            // A treeItem for this blob already exists, no need to do anything with the tree, just upload
-                            await this.uploadLocalFile(filePath, blobPath, await this.shouldUseAzCopy(context, filePath));
-                            return;
-                        }
-                    } catch (err) {
-                        // https://github.com/Microsoft/vscode-azuretools/issues/85
-                    }
-                }
-
-                await this.createChild(<IExistingBlobContext>{ ...context, blobPath, filePath });
-            }
-        }
-
-        throw new UserCancelledError();
     }
 
     public async deployStaticWebsite(context: IActionContext, sourceFolderPath: string): Promise<void> {
@@ -366,7 +305,7 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
         }
     }
 
-    public async uploadLocalFile(filePath: string, blobPath: string, useAzCopy?: boolean, suppressLogs: boolean = false): Promise<void> {
+    public async uploadLocalFile(filePath: string, blobPath: string, useAzCopy: boolean = false, suppressLogs: boolean = false): Promise<void> {
         const blobFriendlyPath: string = `${this.friendlyContainerName}/${blobPath}`;
 
         // tslint:disable-next-line: strict-boolean-expressions
@@ -380,8 +319,8 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
 
         if (useAzCopy) {
             const src: ILocalLocation = createAzCopyLocalSource(filePath);
-            const dst: IRemoteSasLocation = createAzCopyDestination(this.root, this.container.name, blobPath);
-            await azCopyTransfer(src, dst, transferProgress);
+            const dst: IRemoteSasLocation = createAzCopyDestination(this, blobPath);
+            await azCopyBlobTransfer(src, dst, transferProgress);
         } else {
             const blockBlobClient: azureStorageBlob.BlockBlobClient = createBlockBlobClient(this.root, this.container.name, blobPath);
             const options: azureStorageBlob.BlockBlobParallelUploadOptions = {
@@ -411,14 +350,5 @@ export class BlobContainerTreeItem extends AzureParentTreeItem<IStorageRoot> imp
         }
 
         return undefined;
-    }
-
-    private async shouldUseAzCopy(context: IActionContext, localPath: string): Promise<boolean> {
-        let size = (await fse.stat(localPath)).size;
-        context.telemetry.measurements.blockBlobUploadSize = size;
-
-        const useAzCopy: boolean = size > Limits.maxUploadDownloadSizeBytes;
-        context.telemetry.properties.azCopyBlockBlobUpload = useAzCopy ? 'true' : 'false';
-        return useAzCopy;
     }
 }
