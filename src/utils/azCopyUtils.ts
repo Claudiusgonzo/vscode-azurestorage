@@ -37,7 +37,7 @@ export function createAzCopyLocalSource(sourcePath: string): ILocalLocation {
 export function createAzCopyLocalDirectorySource(sourceDirectoryPath: string): ILocalLocation {
     // TODO: this doesn't support uploading '.' files/directories (.git & .vscode will need to be excluded)
     // Append an '*' to the path and use wildcard so that all children are uploaded (not including the given folder)
-    const path: string = sourceDirectoryPath.endsWith(sep) ? `${sourceDirectoryPath}*` : `${sourceDirectoryPath}${sep}*`;
+    const path: string = sourceDirectoryPath.endsWith(sep) ? `${sourceDirectoryPath}.*` : `${sourceDirectoryPath}${sep}.*`;
     return { type: "Local", path, useWildCard: true };
 }
 
@@ -100,7 +100,8 @@ async function azCopyTransfer(
             AzCopyExe32: ext.azCopyExePath
         };
         const copyClient: AzCopyClient = new AzCopyClient({ exes });
-        const copyOptions: ICopyOptions = { fromTo, overwriteExisting: "true", recursive: true, followSymLinks: true };
+
+        const copyOptions: ICopyOptions = { fromTo, overwriteExisting: "true", recursive: true, followSymLinks: true, excludePath: '.git;.vscode' };
         let jobId = await startAndWaitForCopy(copyClient, src, dst, copyOptions, transferProgress, notificationProgress, throwIfCanceled);
         let finalTransferStatus = (await copyClient.getJobInfo(jobId)).latestStatus;
         if (!finalTransferStatus || finalTransferStatus.JobStatus === 'Failed') {
