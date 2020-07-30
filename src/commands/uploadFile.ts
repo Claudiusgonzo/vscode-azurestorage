@@ -12,7 +12,8 @@ import { shouldUseAzCopy } from "../utils/azCopyUtils";
 import { doesBlobExist } from "../utils/blobUtils";
 import { doesFileExist } from "../utils/fileUtils";
 import { localize } from "../utils/localize";
-import { validateFileName, warnFileAlreadyExists } from "../utils/validateNames";
+import { warnFileAlreadyExists } from "../utils/uploadUtils";
+import { validateFileName } from "../utils/validateNames";
 
 let lastUploadFolder: Uri;
 

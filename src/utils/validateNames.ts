@@ -3,8 +3,6 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DialogResponses } from "vscode-azureextensionui";
-import { ext } from "../extensionVariables";
 import { localize } from "./localize";
 
 const invalidBlobDirectoryChar = '\\'; // Keeps behavior consistent on Mac & Windows when creating blob directories via the file explorer
@@ -73,13 +71,4 @@ export function validateDocumentPath(documentPath: string, documentType: Documen
     }
 
     return undefined;
-}
-
-export async function warnFileAlreadyExists(filePath: string): Promise<void> {
-    await ext.ui.showWarningMessage(
-        localize('fileAlreadyExists', `A file with the name "${filePath}" already exists. Do you want to overwrite it?`),
-        { modal: true },
-        DialogResponses.yes,
-        DialogResponses.cancel
-    );
 }
