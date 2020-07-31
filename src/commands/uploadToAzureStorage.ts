@@ -16,8 +16,7 @@ import { doesBlobExist, getBlobPath } from '../utils/blobUtils';
 import { doesFileExist, getFileName } from '../utils/fileUtils';
 import { getNumFilesInDirectory } from '../utils/fs';
 import { localize } from '../utils/localize';
-import { uploadFiles } from '../utils/uploadUtils';
-import { warnFileAlreadyExists } from '../utils/validateNames';
+import { uploadFiles, warnFileAlreadyExists } from '../utils/uploadUtils';
 import { selectWorkspaceItem } from '../utils/workspaceUtils';
 
 export async function uploadToAzureStorage(actionContext: IActionContext, target?: vscode.Uri): Promise<void> {

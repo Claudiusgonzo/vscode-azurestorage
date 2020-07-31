@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { AzCopyClient, AzCopyExes, AzCopyLocation, FromToOption, IAzCopyClient, ICopyOptions, ILocalLocation, IRemoteSasLocation, TransferStatus } from '@azure-tools/azcopy-node';
+import { AzCopyClient, AzCopyLocation, FromToOption, IAzCopyClient, ICopyOptions, ILocalLocation, IRemoteSasLocation, TransferStatus } from '@azure-tools/azcopy-node';
 import { ContainerClient } from '@azure/storage-blob';
 import { ShareClient } from '@azure/storage-file-share';
 import { stat } from 'fs-extra';
@@ -94,12 +94,7 @@ async function azCopyTransfer(
     throwIfCanceled?: () => void,
 ): Promise<void> {
     if (await validateAzCopyInstalled()) {
-        const exes: AzCopyExes = {
-            AzCopyExe: ext.azCopyExePath,
-            AzCopyExe64: ext.azCopyExePath,
-            AzCopyExe32: ext.azCopyExePath
-        };
-        const copyClient: AzCopyClient = new AzCopyClient({ exes });
+        const copyClient: AzCopyClient = new AzCopyClient({ exe: ext.azCopyExePath });
         const copyOptions: ICopyOptions = { fromTo, overwriteExisting: "true", recursive: true, followSymLinks: true };
         let jobId = await startAndWaitForCopy(copyClient, src, dst, copyOptions, transferProgress, notificationProgress, throwIfCanceled);
         let finalTransferStatus = (await copyClient.getJobInfo(jobId)).latestStatus;
