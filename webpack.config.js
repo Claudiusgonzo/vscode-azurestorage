@@ -20,12 +20,12 @@ let config = dev.getDefaultWebpackConfig({
     verbosity: DEBUG_WEBPACK ? 'debug' : 'normal',
     externals: {
         './getCoreNodeModule': 'commonjs getCoreNodeModule',
-        '@azure-tools/azcopy-darwin': '',
-        '@azure-tools/azcopy-linux': '',
-        '@azure-tools/azcopy-win32': '',
-        '@azure-tools/azcopy-win64': '',
-        '@storage-explorer/macos-keychain': '',
-        'keytar': '',
+        '@azure-tools/azcopy-darwin': true,
+        '@azure-tools/azcopy-linux': true,
+        '@azure-tools/azcopy-win32': true,
+        '@azure-tools/azcopy-win64': true,
+        '@storage-explorer/macos-keychain': true,
+        'keytar': true
     },
     plugins: [
         new CopyWebpackPlugin([
