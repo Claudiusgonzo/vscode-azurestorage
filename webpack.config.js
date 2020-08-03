@@ -20,6 +20,7 @@ let config = dev.getDefaultWebpackConfig({
     verbosity: DEBUG_WEBPACK ? 'debug' : 'normal',
     externals: {
         './getCoreNodeModule': 'commonjs getCoreNodeModule',
+        '@azure-tools/azcopy-darwin': '',
         '@azure-tools/azcopy-linux': '',
         '@azure-tools/azcopy-win32': '',
         '@azure-tools/azcopy-win64': '',
