@@ -24,7 +24,8 @@ let config = dev.getDefaultWebpackConfig({
         '@azure-tools/azcopy-linux': '',
         '@azure-tools/azcopy-win32': '',
         '@azure-tools/azcopy-win64': '',
-        '@storage-explorer/macos-keychain': ''
+        '@storage-explorer/macos-keychain': '',
+        'keytar': '',
     },
     plugins: [
         new CopyWebpackPlugin([
